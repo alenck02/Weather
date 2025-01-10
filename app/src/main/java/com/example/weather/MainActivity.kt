@@ -1,13 +1,21 @@
 package com.example.weather
 
+import android.content.Context
+import android.content.pm.PackageManager
+import android.location.Location
 import android.os.Bundle
+import android.Manifest
+import android.location.Geocoder
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -21,11 +29,17 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
@@ -33,8 +47,12 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.app.ActivityCompat
 import com.example.weather.ui.theme.SkyBlue
 import com.example.weather.ui.theme.White
+import com.google.android.gms.location.FusedLocationProviderClient
+import com.google.android.gms.location.LocationServices
+import java.util.Locale
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -86,21 +104,100 @@ fun WeatherTheme() {
 
 @Composable
 fun WeatherHeader(customFont: FontFamily) {
+    var location by remember { mutableStateOf("서울시") }
+
+    val context = LocalContext.current
+    val fusedLocationClient = LocationServices.getFusedLocationProviderClient(context)
+
+    val requestPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        if (permissions[Manifest.permission.ACCESS_FINE_LOCATION] == true) {
+            getLastLocation(fusedLocationClient, context) { newLocation ->
+                location = newLocation
+            }
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        when {
+            ActivityCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED -> {
+                getLastLocation(fusedLocationClient, context) { newLocation ->
+                    location = newLocation
+                }
+            }
+            else -> {
+                requestPermissionLauncher.launch(arrayOf(
+                    Manifest.permission.ACCESS_FINE_LOCATION,
+                    Manifest.permission.ACCESS_COARSE_LOCATION
+                ))
+            }
+        }
+    }
+
     Row(
         modifier = Modifier
-            .padding(top = 30.dp, bottom = 10.dp),
+            .padding(top = 30.dp, bottom = 10.dp)
+            .clickable {
+                getLastLocation(fusedLocationClient, context) { newLocation ->
+                    location = newLocation
+                }
+            },
         horizontalArrangement = Arrangement.Center
     ) {
         Image(
+            modifier = Modifier.padding(end = 5.dp),
             painter = painterResource(id = R.drawable.autorenew),
             contentDescription = null
         )
         Text(
-            text = "서울 강남구",
+            text = location,
             fontFamily = customFont,
             fontSize = 20.sp,
-            color = White
+            color = Color.White
         )
+    }
+}
+
+private fun getLastLocation(
+    fusedLocationClient: FusedLocationProviderClient,
+    context: Context,
+    onLocationUpdated: (String) -> Unit
+) {
+    if (ActivityCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
+        ActivityCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+
+        fusedLocationClient.lastLocation.addOnSuccessListener { location: Location? ->
+            location?.let {
+                val geocoder = Geocoder(context, Locale.getDefault())
+                try {
+                    val addresses = geocoder.getFromLocation(it.latitude, it.longitude, 1)
+
+                    if (addresses != null && addresses.isNotEmpty()) {
+                        val address = addresses[0]
+                        val locality = address.locality
+
+                        val formattedAddress = if (!locality.isNullOrEmpty()) {
+                            locality
+                        } else {
+                            "주소를 찾을 수 없습니다."
+                        }
+
+                        onLocationUpdated(formattedAddress)
+                    } else {
+                        onLocationUpdated("주소를 찾을 수 없습니다.")
+                    }
+                } catch (e: Exception) {
+                    onLocationUpdated("주소를 찾을 수 없습니다: ${e.message}")
+                }
+            } ?: run {
+                onLocationUpdated("위치를 가져올 수 없습니다.")
+            }
+        }.addOnFailureListener { exception ->
+            onLocationUpdated("위치 가져오기 실패: ${exception.message}")
+        }
+    } else {
+        onLocationUpdated("권한이 필요합니다.")
     }
 }
 
