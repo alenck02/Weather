@@ -286,7 +286,7 @@ fun WeekWeatherInfoItem(
             color = White
         )
         Text(
-            text = "$value1°",
+            text = "$value2°",
             fontSize = 16.sp,
             color = White
         )
