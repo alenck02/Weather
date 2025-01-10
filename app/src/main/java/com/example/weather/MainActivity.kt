@@ -16,6 +16,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -27,6 +29,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -104,7 +107,7 @@ fun WeatherHeader(customFont: FontFamily) {
 @Composable
 fun WeatherTemperature(customFont: FontFamily) {
     Text(
-        text = "-2°",
+        text = "-2" + "°",
         fontFamily = customFont,
         fontSize = 50.sp,
         color = White
@@ -194,7 +197,7 @@ fun WeekWeatherInfo() {
             value = "20%",
             painterResource(R.drawable.sunny),
             painterResource(R.drawable.cloud),
-            value1 = "8",
+            value1 = "12",
             value2 = "3"
         )
 
@@ -273,22 +276,28 @@ fun WeekWeatherInfoItem(
             color = White
         )
         Image(
+            modifier = Modifier.size(24.dp),
             painter = image1,
             contentDescription = null
         )
         Image(
+            modifier = Modifier.size(24.dp),
             painter = image2,
             contentDescription = null
         )
         Text(
             text = "$value1°",
             fontSize = 16.sp,
-            color = White
+            color = White,
+            modifier = Modifier.width(35.dp),
+            textAlign = TextAlign.End
         )
         Text(
             text = "$value2°",
             fontSize = 16.sp,
-            color = White
+            color = White,
+            modifier = Modifier.width(35.dp),
+            textAlign = TextAlign.End
         )
     }
 }
