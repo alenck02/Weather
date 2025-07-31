@@ -48,6 +48,7 @@ import java.util.Locale
 import android.Manifest
 import android.content.Context
 import androidx.compose.foundation.clickable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 
 class MainActivity : ComponentActivity() {
@@ -56,6 +57,8 @@ class MainActivity : ComponentActivity() {
         LocationServices.getFusedLocationProviderClient(this)
     }
 
+    private var initialLocation: String = "위치 불러오는 중..."
+
     private val locationPermissionRequest = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
@@ -63,27 +66,75 @@ class MainActivity : ComponentActivity() {
                 permissions[Manifest.permission.ACCESS_COARSE_LOCATION] == true
         if (granted) {
             getLastLocation()
-        } else {
-            // 권한 거부 시 처리
         }
     }
 
-    private var currentAddress by mutableStateOf("서울시 강남구")
+    fun onLocationRefresh(
+        context: Context,
+        onAddressUpdated: (String) -> Unit
+    ) {
+        val fusedLocationClient = LocationServices.getFusedLocationProviderClient(context)
+
+        if (ActivityCompat.checkSelfPermission(
+                context,
+                Manifest.permission.ACCESS_FINE_LOCATION
+            ) != PackageManager.PERMISSION_GRANTED &&
+            ActivityCompat.checkSelfPermission(
+                context,
+                Manifest.permission.ACCESS_COARSE_LOCATION
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            return
+        }
+
+        fusedLocationClient.lastLocation.addOnSuccessListener { location ->
+            location?.let {
+                val geocoder = Geocoder(context, Locale.getDefault())
+                val addresses = geocoder.getFromLocation(location.latitude, location.longitude, 1)
+
+                if (!addresses.isNullOrEmpty()) {
+                    val address = addresses[0]
+                    val city = address.locality ?: address.adminArea ?: ""
+                    val district = address.subLocality ?: address.subAdminArea ?: ""
+                    val finalAddress = "$city $district"
+                    onAddressUpdated(finalAddress)
+                } else {
+                    onAddressUpdated("주소를 불러올 수 없음")
+                }
+            } ?: run {
+                onAddressUpdated("위치 정보 없음")
+            }
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
+
+        checkLocationPermissionAndRequest()
+
         setContent {
             WeatherTheme {
+                var locationText by remember { mutableStateOf(initialLocation) }
+
+                LaunchedEffect(Unit) {
+                    getCurrentLocation(this@MainActivity) { newAddress ->
+                        locationText = newAddress
+                    }
+                }
+
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
                     Greeting(
                         modifier = Modifier.padding(innerPadding),
-                        locationText = currentAddress
+                        locationText = locationText,
+                        onLocationRefresh = {
+                            onLocationRefresh(context = this@MainActivity) { newAddress ->
+                                locationText = newAddress
+                            }
+                        }
                     )
                 }
             }
         }
-        checkLocationPermissionAndRequest()
     }
 
     private fun checkLocationPermissionAndRequest() {
@@ -105,38 +156,24 @@ class MainActivity : ComponentActivity() {
     private fun getLastLocation() {
         if (ActivityCompat.checkSelfPermission(
                 this,
-                android.Manifest.permission.ACCESS_FINE_LOCATION
-            ) != PackageManager.PERMISSION_GRANTED && ActivityCompat.checkSelfPermission(
+                Manifest.permission.ACCESS_FINE_LOCATION
+            ) != PackageManager.PERMISSION_GRANTED &&
+            ActivityCompat.checkSelfPermission(
                 this,
-                android.Manifest.permission.ACCESS_COARSE_LOCATION
+                Manifest.permission.ACCESS_COARSE_LOCATION
             ) != PackageManager.PERMISSION_GRANTED
-        ) {
-            // TODO: Consider calling
-            //    ActivityCompat#requestPermissions
-            // here to request the missing permissions, and then overriding
-            //   public void onRequestPermissionsResult(int requestCode, String[] permissions,
-            //                                          int[] grantResults)
-            // to handle the case where the user grants the permission. See the documentation
-            // for ActivityCompat#requestPermissions for more details.
-            return
-        }
+        ) return
+
         fusedLocationClient.lastLocation.addOnSuccessListener { location ->
             if (location != null) {
-                val geocoder = Geocoder(this, Locale.getDefault())
+                val geocoder = Geocoder(this, Locale.KOREA)
                 val addresses = geocoder.getFromLocation(location.latitude, location.longitude, 1)
-                if (addresses != null && addresses.isNotEmpty()) {
-                    val addr = addresses[0]
-                    val city = addr.locality ?: ""
-                    val district = addr.subLocality ?: ""
-                    currentAddress = "$city $district"
-                } else {
-                    currentAddress = "주소 정보를 가져올 수 없습니다."
+                if (!addresses.isNullOrEmpty()) {
+                    val city = addresses[0].locality ?: ""
+                    val district = addresses[0].subLocality ?: ""
+                    initialLocation = "$city $district"
                 }
-            } else {
-                currentAddress = "위치 정보를 가져올 수 없습니다."
             }
-        }.addOnFailureListener {
-            currentAddress = "위치 정보를 가져오는 중 오류 발생"
         }
     }
 }
@@ -157,10 +194,9 @@ fun getCurrentLocation(context: Context, onAddressReceived: (String) -> Unit) {
             val addressList = geocoder.getFromLocation(location.latitude, location.longitude, 1)
             if (!addressList.isNullOrEmpty()) {
                 val address = addressList[0]
-                val city = address.locality ?: ""
-                val district = address.subLocality ?: ""
-                val fullAddress = "$city $district"
-                onAddressReceived(fullAddress)
+                val city = address.locality ?: address.adminArea ?: ""
+                val district = address.subLocality ?: address.subAdminArea ?: ""
+                onAddressReceived("$city $district")
             } else {
                 onAddressReceived("주소 정보 없음")
             }
@@ -173,7 +209,7 @@ fun getCurrentLocation(context: Context, onAddressReceived: (String) -> Unit) {
 }
 
 @Composable
-fun Greeting(modifier: Modifier = Modifier, locationText: String) {
+fun Greeting(modifier: Modifier = Modifier, locationText: String, onLocationRefresh: () -> Unit) {
     val context = LocalContext.current
 
     val skyBlue = Color(ContextCompat.getColor(context, R.color.skyBlue))
@@ -182,8 +218,6 @@ fun Greeting(modifier: Modifier = Modifier, locationText: String) {
     val myFontFamily = FontFamily(
         Font(R.font.oswald_bold)
     )
-
-    var locationText by remember { mutableStateOf("서울시 강남구") }
 
     Box(
         modifier = modifier
@@ -200,14 +234,15 @@ fun Greeting(modifier: Modifier = Modifier, locationText: String) {
                 modifier = Modifier
                     .align(Alignment.CenterHorizontally)
             ) {
-                Image(painter = painterResource(id = R.drawable.location_re), contentDescription = "location",
+                Image(
+                    painter = painterResource(id = R.drawable.location_re),
+                    contentDescription = "location",
                     modifier = Modifier
                         .size(25.dp)
                         .clickable {
-                            getCurrentLocation(context) { newAddress ->
-                                locationText = newAddress
-                            }
-                        })
+                            onLocationRefresh()
+                        }
+                )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(text = locationText, color = skyBlue, fontSize = 22.sp, fontFamily = myFontFamily)
             }
@@ -373,14 +408,5 @@ fun Greeting(modifier: Modifier = Modifier, locationText: String) {
                 }
             }
         }
-    }
-}
-
-@Preview(showBackground = true)
-@Composable
-fun mainView() {
-    WeatherTheme {
-        mainView()
-        Greeting(modifier = Modifier.padding(10.dp), "서울시 강남구")
     }
 }
