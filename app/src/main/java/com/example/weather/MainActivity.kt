@@ -1,55 +1,40 @@
 package com.example.weather
 
+import android.Manifest
 import android.content.pm.PackageManager
 import android.location.Geocoder
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.asPaddingValues
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.systemBars
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
-import com.example.weather.ui.theme.WeatherTheme
+import com.example.weather.OpenAPI.RetrofitInstance
 import com.google.android.gms.location.LocationServices
-import java.util.Locale
-import android.Manifest
-import android.content.Context
-import androidx.compose.foundation.clickable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.remember
+import retrofit2.Call
+import retrofit2.Callback
+import retrofit2.Response
+import com.example.weather.OpenAPI.CurrentWeatherResponse
+import com.example.weather.OpenAPI.ForecastItem
+import com.example.weather.OpenAPI.ForecastResponse
+import com.example.weather.ui.theme.WeatherTheme
+import java.text.SimpleDateFormat
+import java.util.*
 
 class MainActivity : ComponentActivity() {
 
@@ -57,354 +42,217 @@ class MainActivity : ComponentActivity() {
         LocationServices.getFusedLocationProviderClient(this)
     }
 
-    private var initialLocation: String = "위치 불러오는 중..."
-
-    private val locationPermissionRequest = registerForActivityResult(
-        ActivityResultContracts.RequestMultiplePermissions()
-    ) { permissions ->
-        val granted = permissions[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
-                permissions[Manifest.permission.ACCESS_COARSE_LOCATION] == true
-        if (granted) {
-            getLastLocation()
-        }
-    }
-
-    fun onLocationRefresh(
-        context: Context,
-        onAddressUpdated: (String) -> Unit
-    ) {
-        val fusedLocationClient = LocationServices.getFusedLocationProviderClient(context)
-
-        if (ActivityCompat.checkSelfPermission(
-                context,
-                Manifest.permission.ACCESS_FINE_LOCATION
-            ) != PackageManager.PERMISSION_GRANTED &&
-            ActivityCompat.checkSelfPermission(
-                context,
-                Manifest.permission.ACCESS_COARSE_LOCATION
-            ) != PackageManager.PERMISSION_GRANTED
-        ) {
-            return
-        }
-
-        fusedLocationClient.lastLocation.addOnSuccessListener { location ->
-            location?.let {
-                val geocoder = Geocoder(context, Locale.getDefault())
-                val addresses = geocoder.getFromLocation(location.latitude, location.longitude, 1)
-
-                if (!addresses.isNullOrEmpty()) {
-                    val address = addresses[0]
-                    val city = address.locality ?: address.adminArea ?: ""
-                    val district = address.subLocality ?: address.subAdminArea ?: ""
-                    val finalAddress = "$city $district"
-                    onAddressUpdated(finalAddress)
-                } else {
-                    onAddressUpdated("주소를 불러올 수 없음")
-                }
-            } ?: run {
-                onAddressUpdated("위치 정보 없음")
-            }
-        }
-    }
+    private lateinit var requestPermissionLauncher: ActivityResultLauncher<Array<String>>
+    private val initialLocation = "위치 불러오는 중..."
+    private var currentLat = 0.0
+    private var currentLon = 0.0
+    private lateinit var apiKey: String
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        apiKey = getString(R.string.api_key)
 
-        checkLocationPermissionAndRequest()
+        requestPermissionLauncher = registerForActivityResult(
+            ActivityResultContracts.RequestMultiplePermissions()
+        ) { permissions ->
+            val granted = permissions[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
+                    permissions[Manifest.permission.ACCESS_COARSE_LOCATION] == true
+            if (granted) {
+                getCurrentLocation { lat, lon, address ->
+                    currentLat = lat
+                    currentLon = lon
+                    locationTextState.value = address
+
+                    fetchCurrentWeather(lat, lon, currentWeatherState)
+                    fetchForecast(lat, lon, forecastState)
+                }
+            } else {
+                locationTextState.value = "위치 권한 없음"
+            }
+        }
 
         setContent {
             WeatherTheme {
-                var locationText by remember { mutableStateOf(initialLocation) }
+                locationTextState = remember { mutableStateOf(initialLocation) }
+                currentWeatherState = remember { mutableStateOf<CurrentWeatherResponse?>(null) }
+                forecastState = remember { mutableStateOf<List<ForecastItem>>(emptyList()) }
 
                 LaunchedEffect(Unit) {
-                    getCurrentLocation(this@MainActivity) { newAddress ->
-                        locationText = newAddress
-                    }
+                    checkLocationPermission()
                 }
 
-                Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-                    Greeting(
-                        modifier = Modifier.padding(innerPadding),
-                        locationText = locationText,
-                        onLocationRefresh = {
-                            onLocationRefresh(context = this@MainActivity) { newAddress ->
-                                locationText = newAddress
-                            }
-                        }
-                    )
+                Scaffold(
+                    modifier = Modifier.fillMaxSize(),
+                    containerColor = Color.White
+                ) { innerPadding ->
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(innerPadding)
+                            .background(Color.White),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        WeatherMainScreen(
+                            locationText = locationTextState.value,
+                            onLocationRefresh = { refreshLocation() },
+                            currentWeather = currentWeatherState.value,
+                            forecastList = forecastState.value
+                        )
+                    }
                 }
             }
         }
     }
 
-    private fun checkLocationPermissionAndRequest() {
+    private lateinit var locationTextState: MutableState<String>
+    private lateinit var currentWeatherState: MutableState<CurrentWeatherResponse?>
+    private lateinit var forecastState: MutableState<List<ForecastItem>>
+
+    private fun checkLocationPermission() {
         val fineLocation = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
         val coarseLocation = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION)
 
-        if (fineLocation == PackageManager.PERMISSION_GRANTED || coarseLocation == PackageManager.PERMISSION_GRANTED) {
-            getLastLocation()
+        val granted = fineLocation == PackageManager.PERMISSION_GRANTED || coarseLocation == PackageManager.PERMISSION_GRANTED
+        if (granted) {
+            getCurrentLocation { lat, lon, address ->
+                currentLat = lat
+                currentLon = lon
+                locationTextState.value = address
+
+                fetchCurrentWeather(lat, lon, currentWeatherState)
+                fetchForecast(lat, lon, forecastState)
+            }
         } else {
-            locationPermissionRequest.launch(
-                arrayOf(
-                    Manifest.permission.ACCESS_FINE_LOCATION,
-                    Manifest.permission.ACCESS_COARSE_LOCATION
-                )
+            requestPermissionLauncher.launch(
+                arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
             )
         }
     }
 
-    private fun getLastLocation() {
-        if (ActivityCompat.checkSelfPermission(
-                this,
-                Manifest.permission.ACCESS_FINE_LOCATION
-            ) != PackageManager.PERMISSION_GRANTED &&
-            ActivityCompat.checkSelfPermission(
-                this,
-                Manifest.permission.ACCESS_COARSE_LOCATION
-            ) != PackageManager.PERMISSION_GRANTED
-        ) return
+    private fun refreshLocation() {
+        getCurrentLocation { lat, lon, address ->
+            currentLat = lat
+            currentLon = lon
+            locationTextState.value = address
+
+            fetchCurrentWeather(lat, lon, currentWeatherState)
+            fetchForecast(lat, lon, forecastState)
+        }
+    }
+
+    private fun getCurrentLocation(onAddressReceived: (Double, Double, String) -> Unit) {
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED &&
+            ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED
+        ) {
+            onAddressReceived(0.0, 0.0, "권한 없음")
+            return
+        }
 
         fusedLocationClient.lastLocation.addOnSuccessListener { location ->
             if (location != null) {
                 val geocoder = Geocoder(this, Locale.KOREA)
                 val addresses = geocoder.getFromLocation(location.latitude, location.longitude, 1)
-                if (!addresses.isNullOrEmpty()) {
-                    val city = addresses[0].locality ?: ""
-                    val district = addresses[0].subLocality ?: ""
-                    initialLocation = "$city $district"
-                }
-            }
-        }
-    }
-}
-
-fun getCurrentLocation(context: Context, onAddressReceived: (String) -> Unit) {
-    val fusedLocationProviderClient = LocationServices.getFusedLocationProviderClient(context)
-
-    if (ActivityCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED &&
-        ActivityCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED
-    ) {
-        onAddressReceived("위치 권한 없음")
-        return
-    }
-
-    fusedLocationProviderClient.lastLocation.addOnSuccessListener { location ->
-        if (location != null) {
-            val geocoder = Geocoder(context, Locale.getDefault())
-            val addressList = geocoder.getFromLocation(location.latitude, location.longitude, 1)
-            if (!addressList.isNullOrEmpty()) {
-                val address = addressList[0]
-                val city = address.locality ?: address.adminArea ?: ""
-                val district = address.subLocality ?: address.subAdminArea ?: ""
-                onAddressReceived("$city $district")
+                val city = addresses?.getOrNull(0)?.locality ?: ""
+                val district = addresses?.getOrNull(0)?.subLocality ?: ""
+                onAddressReceived(location.latitude, location.longitude, "$city $district")
             } else {
-                onAddressReceived("주소 정보 없음")
+                onAddressReceived(0.0, 0.0, "위치 정보 없음")
             }
-        } else {
-            onAddressReceived("위치 정보 없음")
         }
-    }.addOnFailureListener {
-        onAddressReceived("위치 요청 실패")
     }
-}
 
-@Composable
-fun Greeting(modifier: Modifier = Modifier, locationText: String, onLocationRefresh: () -> Unit) {
-    val context = LocalContext.current
+    private fun fetchCurrentWeather(lat: Double, lon: Double, state: MutableState<CurrentWeatherResponse?>) {
+        RetrofitInstance.api.getCurrentWeather(lat, lon, apiKey)
+            .enqueue(object : Callback<CurrentWeatherResponse> {
+                override fun onResponse(call: Call<CurrentWeatherResponse>, response: Response<CurrentWeatherResponse>) {
+                    if (response.isSuccessful) state.value = response.body()
+                }
 
-    val skyBlue = Color(ContextCompat.getColor(context, R.color.skyBlue))
-    val white = Color(ContextCompat.getColor(context, R.color.white))
+                override fun onFailure(call: Call<CurrentWeatherResponse>, t: Throwable) {
+                    state.value = null
+                }
+            })
+    }
 
-    val myFontFamily = FontFamily(
-        Font(R.font.oswald_bold)
-    )
+    private fun fetchForecast(lat: Double, lon: Double, state: MutableState<List<ForecastItem>>) {
+        RetrofitInstance.api.getForecast(lat, lon, apiKey)
+            .enqueue(object : Callback<ForecastResponse> {
+                override fun onResponse(call: Call<ForecastResponse>, response: Response<ForecastResponse>) {
+                    if (response.isSuccessful) state.value = response.body()?.list ?: emptyList()
+                }
 
-    Box(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(WindowInsets.systemBars.asPaddingValues())
+                override fun onFailure(call: Call<ForecastResponse>, t: Throwable) {
+                    state.value = emptyList()
+                }
+            })
+    }
+
+    @Composable
+    fun WeatherMainScreen(
+        locationText: String,
+        onLocationRefresh: () -> Unit,
+        currentWeather: CurrentWeatherResponse?,
+        forecastList: List<ForecastItem>
     ) {
+        val skyBlue = Color(getColor(R.color.skyBlue))
+            val myFontFamily = FontFamily(Font(R.font.oswald_bold))
+
+        val dailyForecast = remember(forecastList) {
+            forecastList.groupBy { item ->
+                val cal = Calendar.getInstance().apply { timeInMillis = item.dt * 1000 }
+                cal.get(Calendar.DAY_OF_YEAR)
+            }.map { (_, items) ->
+                val maxTemp = items.maxOfOrNull { it.main.temp_max } ?: 0.0
+                val minTemp = items.minOfOrNull { it.main.temp_min } ?: 0.0
+                val weatherMain = items.firstOrNull()?.weather?.firstOrNull()?.main ?: ""
+                Triple(maxTemp, minTemp, weatherMain)
+            }
+        }
+
+        val dailyForecastFilled = mutableListOf<Triple<Double, Double, String>>()
+        for (i in 0 until 7) {
+            if (i < dailyForecast.size) dailyForecastFilled.add(dailyForecast[i])
+            else dailyForecastFilled.add(Triple(0.0, 0.0, "데이터 없음"))
+        }
+
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier
-                .align(Alignment.Center)
+                .fillMaxSize()
+                .padding(16.dp)
         ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .align(Alignment.CenterHorizontally)
-            ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
                 Image(
                     painter = painterResource(id = R.drawable.location_re),
                     contentDescription = "location",
                     modifier = Modifier
                         .size(25.dp)
-                        .clickable {
-                            onLocationRefresh()
-                        }
+                        .clickable { onLocationRefresh() }
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(text = locationText, color = skyBlue, fontSize = 22.sp, fontFamily = myFontFamily)
             }
 
             Spacer(modifier = Modifier.height(16.dp))
-            Text(text = "25℃", color = skyBlue, fontSize = 40.sp, fontFamily = myFontFamily)
-            Spacer(modifier = Modifier.height(16.dp))
-            Text(text = "맑음", color = skyBlue, fontSize = 20.sp, fontFamily = myFontFamily)
 
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .align(Alignment.CenterHorizontally)
-            ) {
-                Text(text = "30℃ / 23℃", color = skyBlue, fontSize = 18.sp, fontFamily = myFontFamily)
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(text = "체감온도 27℃", color = skyBlue, fontSize = 18.sp, fontFamily = myFontFamily)
+            currentWeather?.let { current ->
+                Text("${current.main.temp.toInt()}℃", fontSize = 40.sp, color = skyBlue, fontFamily = myFontFamily)
+                Text(current.weather.firstOrNull()?.main ?: "", fontSize = 20.sp, color = skyBlue, fontFamily = myFontFamily)
+                Spacer(modifier = Modifier.height(8.dp))
+                Text("체감: ${current.main.feels_like.toInt()}℃, 습도: ${current.main.humidity}%", fontSize = 18.sp, color = skyBlue, fontFamily = myFontFamily)
             }
 
             Spacer(modifier = Modifier.height(24.dp))
 
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth(fraction = 0.9f)
-                    .background(color = skyBlue, shape = RoundedCornerShape(20.dp))
-                    .padding(15.dp)
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Text("미세먼지", color = white, fontSize = 18.sp, fontFamily = myFontFamily)
-                        Text("보통", color = white, fontSize = 18.sp, fontFamily = myFontFamily)
-                    }
-
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Text("초미세먼지", color = white, fontSize = 18.sp, fontFamily = myFontFamily)
-                        Text("나쁨", color = white, fontSize = 18.sp, fontFamily = myFontFamily)
-                    }
-
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Text("습도", color = white, fontSize = 18.sp, fontFamily = myFontFamily)
-                        Text("73%", color = white, fontSize = 18.sp, fontFamily = myFontFamily)
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(15.dp))
-
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth(fraction = 0.9f)
-                    .background(color = skyBlue, shape = RoundedCornerShape(20.dp))
-                    .padding(15.dp)
-            ) {
-                Column (
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.SpaceAround,
-                    modifier = Modifier
-                        .fillMaxSize()
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceAround,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                    ) {
-                        Text("오늘", color = white, fontSize = 18.sp, fontFamily = myFontFamily, modifier = Modifier
-                            .width(50.dp))
-                        Text("20%", color = white, fontSize = 18.sp, fontFamily = myFontFamily)
-                        Text("29℃/20℃", color = white, fontSize = 18.sp, fontFamily = myFontFamily, modifier = Modifier
-                            .width(100.dp))
-                    }
-
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceAround,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                    ) {
-                        Text("내일", color = white, fontSize = 18.sp, fontFamily = myFontFamily, modifier = Modifier
-                            .width(50.dp))
-                        Text("40%", color = white, fontSize = 18.sp, fontFamily = myFontFamily)
-                        Text("25℃/18℃", color = white, fontSize = 18.sp, fontFamily = myFontFamily, modifier = Modifier
-                            .width(100.dp))
-                    }
-
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceAround,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                    ) {
-                        Text("금요일", color = white, fontSize = 18.sp, fontFamily = myFontFamily, modifier = Modifier
-                            .width(50.dp))
-                        Text("10%", color = white, fontSize = 18.sp, fontFamily = myFontFamily)
-                        Text("35℃/25℃", color = white, fontSize = 18.sp, fontFamily = myFontFamily, modifier = Modifier
-                            .width(100.dp))
-                    }
-
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceAround,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                    ) {
-                        Text("토요일", color = white, fontSize = 18.sp, fontFamily = myFontFamily, modifier = Modifier
-                            .width(50.dp))
-                        Text("10%", color = white, fontSize = 18.sp, fontFamily = myFontFamily)
-                        Text("34℃/24℃", color = white, fontSize = 18.sp, fontFamily = myFontFamily, modifier = Modifier
-                            .width(100.dp))
-                    }
-
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceAround,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                    ) {
-                        Text("일요일", color = white, fontSize = 18.sp, fontFamily = myFontFamily, modifier = Modifier
-                            .width(50.dp))
-                        Text("60%", color = white, fontSize = 18.sp, fontFamily = myFontFamily)
-                        Text("23℃/14℃", color = white, fontSize = 18.sp, fontFamily = myFontFamily, modifier = Modifier
-                            .width(100.dp))
-                    }
-
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceAround,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                    ) {
-                        Text("월요일", color = white, fontSize = 18.sp, fontFamily = myFontFamily, modifier = Modifier
-                            .width(50.dp))
-                        Text("80%", color = white, fontSize = 18.sp, fontFamily = myFontFamily)
-                        Text("21℃/12℃", color = white, fontSize = 18.sp, fontFamily = myFontFamily, modifier = Modifier
-                            .width(100.dp))
-                    }
-
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceAround,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                    ) {
-                        Text("화요일", color = white, fontSize = 18.sp, fontFamily = myFontFamily, modifier = Modifier
-                            .width(50.dp))
-                        Text("10%", color = white, fontSize = 18.sp, fontFamily = myFontFamily)
-                        Text("32℃/22℃", color = white, fontSize = 18.sp, fontFamily = myFontFamily, modifier = Modifier
-                            .width(100.dp))
-                    }
+            Column {
+                Text("7일 예보", fontSize = 20.sp, color = skyBlue, fontFamily = myFontFamily)
+                Spacer(modifier = Modifier.height(8.dp))
+                dailyForecastFilled.forEachIndexed { index, (max, min, weatherMain) ->
+                    val cal = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, index) }
+                    val dateStr = SimpleDateFormat("MM/dd", Locale.KOREA).format(cal.time)
+                    val displayText = if (weatherMain == "데이터 없음") "$dateStr: 데이터 없음" else "$dateStr: $weatherMain, ${max.toInt()}℃/${min.toInt()}℃"
+                    Text(displayText, fontSize = 16.sp, color = skyBlue, fontFamily = myFontFamily)
+                    Spacer(modifier = Modifier.height(4.dp))
                 }
             }
         }
