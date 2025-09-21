@@ -12,14 +12,18 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.app.ActivityCompat
@@ -217,6 +221,7 @@ class MainActivity : ComponentActivity() {
 
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
             modifier = Modifier
                 .fillMaxSize()
                 .padding(16.dp)
@@ -236,23 +241,54 @@ class MainActivity : ComponentActivity() {
             Spacer(modifier = Modifier.height(16.dp))
 
             currentWeather?.let { current ->
-                Text("${current.main.temp.toInt()}℃", fontSize = 40.sp, color = skyBlue, fontFamily = myFontFamily)
-                Text(current.weather.firstOrNull()?.main ?: "", fontSize = 20.sp, color = skyBlue, fontFamily = myFontFamily)
+                Text("${current.main.temp.toInt()}℃", fontSize = 50.sp, color = skyBlue, fontFamily = myFontFamily)
+                Text(current.weather.firstOrNull()?.main ?: "", fontSize = 25.sp, color = skyBlue, fontFamily = myFontFamily)
                 Spacer(modifier = Modifier.height(8.dp))
-                Text("체감: ${current.main.feels_like.toInt()}℃, 습도: ${current.main.humidity}%", fontSize = 18.sp, color = skyBlue, fontFamily = myFontFamily)
+                Text("체감: ${current.main.feels_like.toInt()}℃, 습도: ${current.main.humidity}%", fontSize = 20.sp, fontWeight = FontWeight.Medium, fontStyle = FontStyle.Italic, color = skyBlue, fontFamily = myFontFamily)
             }
 
             Spacer(modifier = Modifier.height(24.dp))
 
-            Column {
-                Text("7일 예보", fontSize = 20.sp, color = skyBlue, fontFamily = myFontFamily)
-                Spacer(modifier = Modifier.height(8.dp))
-                dailyForecastFilled.forEachIndexed { index, (max, min, weatherMain) ->
-                    val cal = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, index) }
-                    val dateStr = SimpleDateFormat("MM/dd", Locale.KOREA).format(cal.time)
-                    val displayText = if (weatherMain == "데이터 없음") "$dateStr: 데이터 없음" else "$dateStr: $weatherMain, ${max.toInt()}℃/${min.toInt()}℃"
-                    Text(displayText, fontSize = 16.sp, color = skyBlue, fontFamily = myFontFamily)
-                    Spacer(modifier = Modifier.height(4.dp))
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(skyBlue.copy(alpha = 0.1f))
+                    .padding(16.dp)
+            ) {
+                Column {
+                    Text(
+                        "7일 예보",
+                        fontSize = 20.sp,
+                        color = skyBlue,
+                        fontFamily = myFontFamily,
+                        lineHeight = 28.sp,
+                        letterSpacing = 1.5.sp,
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+
+                    dailyForecastFilled.forEachIndexed { index, (max, min, weatherMain) ->
+                        val cal = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, index) }
+                        val dayOfWeek = SimpleDateFormat("E", Locale.KOREA).format(cal.time)
+                        val dateStr = SimpleDateFormat("MM/dd", Locale.KOREA).format(cal.time)
+
+                        val displayText = if (weatherMain == "데이터 없음") {
+                            "$dateStr ($dayOfWeek): 데이터 없음"
+                        } else {
+                            "$dateStr ($dayOfWeek): $weatherMain, ${max.toInt()}℃/${min.toInt()}℃"
+                        }
+
+                        Text(
+                            text = displayText,
+                            fontSize = 16.sp,
+                            color = skyBlue,
+                            fontFamily = myFontFamily,
+                            lineHeight = 24.sp,
+                            letterSpacing = 1.5.sp,
+                            modifier = Modifier.padding(vertical = 4.dp)
+                        )
+                    }
                 }
             }
         }
